@@ -11,6 +11,25 @@ struct integer_message {
     int32_t inline_integer;
 };
 
+struct buffer_message {
+    mach_msg_header_t head;
+    mach_msg_type_t type;
+    char buffer[1024];
+};
+
+void receive_buffer(mach_port_t port, struct buffer_message* msg) {
+    mach_msg_return_t err;
+
+    msg->head.msgh_size = sizeof(struct buffer_message);
+    err = mach_msg( (mach_msg_header_t*)msg, MACH_RCV_MSG,
+            0, msg->head.msgh_size, port,
+            MACH_MSG_TIMEOUT_NONE, MACH_PORT_NULL);
+    if(err != MACH_MSG_SUCCESS) {
+        perror("mach_msg");
+        exit(err);
+    }
+}
+
 int32_t receive_integer(mach_port_t port) {
     mach_msg_return_t err;
     struct integer_message msg;
@@ -115,6 +134,8 @@ void thread_fork(void*(*routine)(void*), void* arg) {
         perror("thread_set_state");
         exit(1);
     }
+
+    /* Start thread */
     ret = thread_resume(thread);
     if(ret != KERN_SUCCESS) {
         perror("thread_resume");
@@ -122,41 +143,49 @@ void thread_fork(void*(*routine)(void*), void* arg) {
     }
 }
 
-int another_function() {
-    int x = 5;
-    int y = 6;
-    x = y;
-    return x;
+void stack_overflow(void) {
+    long long int x, y, z;
+    stack_overflow();
 }
 
 void* routine(void* buf) {
-    mach_port_t port = *(mach_port_t*)buf;
-    sleep(3);
-    send_integer(port, another_function());
+    int x = 5 / 0;
+    int y = *(int*)0;
+    stack_overflow();
 
     /* Thread must terminate itself
      * It can't return, because the return address
      * is set to 0.
      */
     thread_terminate(mach_thread_self());
+    return NULL;
 }
 
 int main(int argc, char *argv[]) {
     if(argc && argv) { }
     mach_port_t port;
+    struct buffer_message msg;
     kern_return_t ret;
 
-    ret = mach_port_allocate(mach_task_self(), MACH_PORT_RIGHT_RECEIVE, &port);
+    ret = task_get_special_port(mach_task_self(), TASK_EXCEPTION_PORT, &port);
     if(ret != KERN_SUCCESS) {
-        perror("mach_port_allocate");
+        perror("thread_set_exception_port");
         exit(1);
     }
 
-    thread_fork(routine, &port);
-    int r = receive_integer(port);
-    printf("Received %d\n", r);
+    thread_fork(routine, NULL);
+    receive_buffer(port, &msg);
+    printf("size = %d\n", msg.type.msgt_size);
+    printf("number = %d\n", msg.type.msgt_number);
+    printf("inline = %d\n", msg.type.msgt_inline);
+    printf("longform = %d\n", msg.type.msgt_longform);
+    printf("value = %d\n", *(int*)msg.buffer);
+    if(msg.head.msgh_local_port != MACH_PORT_NULL
+            && msg.head.msgh_local_port != MACH_PORT_DEAD) {
+        printf("Can reply !\n");
+        send_integer(msg.head.msgh_local_port, 42);
+    }
 
-    mach_port_deallocate(mach_task_self(), port);
     return 0;
 }
 
