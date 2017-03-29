@@ -149,20 +149,41 @@ void thread_kill(struct my_thread* thread) {
     mach_port_deallocate(mach_task_self(), thread->rcv);
 }
 
-void routine(mach_port_t port, void* buf) {
-    sleep(1);
-    send_integer(port, *(int*)buf);
+void integers(mach_port_t port, void* buf) {
+    int v = 2;
+    while(1) { send_integer(port, v++); }
+}
+
+struct filter_data {
+    int prime;
+    mach_port_t in;
+};
+
+void filter(mach_port_t out, void* data) {
+    struct filter_data dt = *(struct filter_data*)data;
+    int x;
+    while(1) {
+        x = receive_integer(dt.in);
+        if(x % dt.prime != 0) send_integer(out, x);
+    }
 }
 
 int main(int argc, char *argv[]) {
     if(argc && argv) { }
-    struct my_thread thr;
-    int x = 42;
+    struct filter_data flt;
+    mach_port_t in;
+    int x = 0;
 
-    thr = thread_fork(routine, &x);
-    int r = receive_integer(thr.rcv);
-    printf("Received %d\n", r);
-    thread_kill(&thr);
+    in = thread_fork(integers, NULL).rcv;
+
+    while(x <= 10000) {
+        x = receive_integer(in);
+        printf("%d\n", x);
+
+        flt.in = in;
+        flt.prime = x;
+        in = thread_fork(filter, &flt).rcv;
+    }
 
     return 0;
 }
