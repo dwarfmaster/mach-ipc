@@ -70,6 +70,7 @@ int main(int argc, char *argv[]) {
     error_t err;
     uint32_t buf[4096];
     typeinfo_t tp;
+    mach_msg_type_number_t amount;
 
     if(argc != 2) return 1;
 
@@ -85,10 +86,21 @@ int main(int argc, char *argv[]) {
         exit(1);
     }
 
-    __io_select_request(f, sel, SELECT_WRITE);
+    __io_select_request(f, sel, SELECT_READ);
     receive_data(sel, &tp, buf, 4090);
     printf("%u %u %u\n", tp.id, tp.size, tp.number);
     printf("%d\n", buf[0]);
+
+    io_readable(f, &amount);
+    printf("%d\n", amount);
+    if(amount == 0) goto exit;
+
+    io_read(f, &buf, &amount, -1, amount);
+    buf[amount] = '\0';
+    printf("%s\n", buf);
+
+exit:
+    mach_port_deallocate(mach_task_self(), f);
 
     return 0;
 }
