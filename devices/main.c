@@ -66,19 +66,24 @@ int receive_data(mach_port_t port, typeinfo_t* info, char* buffer, size_t size) 
     return 1;
 }
 
-static unsigned short filter[] = {
-    NETF_IN,
-    NETF_PUSHLIT | NETF_NOP,
-    1
+static struct bpf_insn bpf_filter[] =
+{
+    {NETF_IN|NETF_BPF, 0, 0, 0},		/* Header. */
+    {BPF_LD|BPF_H|BPF_ABS, 0, 0, 12},		/* Load Ethernet type */
+    {BPF_JMP|BPF_JEQ|BPF_K, 2, 0, 0x0806},	/* Accept ARP */
+    {BPF_JMP|BPF_JEQ|BPF_K, 1, 0, 0x0800},	/* Accept IPv4 */
+    {BPF_JMP|BPF_JEQ|BPF_K, 0, 1, 0x86DD},	/* Accept IPv6 */
+    {BPF_RET|BPF_K, 0, 0, 1500},		/* And return 1500 bytes */
+    {BPF_RET|BPF_K, 0, 0, 0},			/* Or discard it all */
 };
-static int filter_len = sizeof(filter) / sizeof(unsigned short);
+static int bpf_filter_len = sizeof (bpf_filter) / sizeof (short);
 
 int main(int argc, char *argv[]) {
     file_t f;
     mach_port_t sel;
     kern_return_t ret;
     error_t err;
-    uint32_t buf[4096];
+    char buf[4096];
     typeinfo_t tp;
     mach_msg_type_number_t amount;
     device_t device;
@@ -118,10 +123,25 @@ int main(int argc, char *argv[]) {
         goto exit;
     }
     ret = device_set_filter(device, rcv, MACH_MSG_TYPE_MAKE_SEND, 0,
-            (unsigned short*)filter, filter_len);
+            (unsigned short*)bpf_filter, bpf_filter_len);
     if(ret != KERN_SUCCESS) {
         perror("device_set_filter");
         goto exit;
+    }
+
+    for(;;) {
+        if(!receive_data(rcv, &tp, buf, 4096)) continue;
+        printf("Received : %d %d (%d)\n", tp.id, tp.size, tp.number);
+
+        int cmd;
+        for(cmd = 0; cmd < 64; ++cmd) {
+            if(cmd % 4 == 0) printf("\n");
+            printf("%02hhX%02hhX%02hhX%02hhX%02hhX%02hhX%02hhX%02hhX ",
+                    buf[cmd * 8],     buf[cmd * 8 + 1], buf[cmd * 8 + 2], buf[cmd * 8 + 3],
+                    buf[cmd * 8 + 4], buf[cmd * 8 + 5], buf[cmd * 8 + 6], buf[cmd * 8 + 7]);
+        }
+        printf("\n");
+        fflush(stdout);
     }
 
 exit:
